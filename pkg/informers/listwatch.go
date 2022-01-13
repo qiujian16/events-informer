@@ -7,11 +7,13 @@ import (
 	"sync"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"github.com/qiujian16/events-informer/pkg/apis"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/watch"
 )
@@ -20,8 +22,9 @@ type EventListWatcher struct {
 	eventClient    cloudevents.Client
 	gvr            schema.GroupVersionResource
 	source         string
+	namespace      string
 	ctx            context.Context
-	listResultChan map[types.UID]chan ListResponseEvent
+	listResultChan map[types.UID]chan apis.ListResponseEvent
 	rwlock         sync.RWMutex
 }
 
@@ -30,52 +33,47 @@ type Event interface {
 }
 
 type ListWatchEvent struct {
-	uid     types.UID
-	gvr     schema.GroupVersionResource
-	options metav1.ListOptions
-	mode    string
-	source  string
+	uid       types.UID
+	gvr       schema.GroupVersionResource
+	options   metav1.ListOptions
+	mode      string
+	source    string
+	namespace string
 }
 
-type ListResponseEvent struct {
-	Objects   *unstructured.UnstructuredList `json:"objects"`
-	EndOfList bool                           `json:"endOfList"`
-}
-
-func newListEvent(source string, gvr schema.GroupVersionResource, options metav1.ListOptions) *ListWatchEvent {
+func newListWatchEvent(source, mode, namespace string, gvr schema.GroupVersionResource, options metav1.ListOptions) *ListWatchEvent {
 	return &ListWatchEvent{
-		uid:     uuid.NewUUID(),
-		gvr:     gvr,
-		options: options,
-		mode:    "list",
-	}
-}
-
-func newWatchEvent(source string, gvr schema.GroupVersionResource, options metav1.ListOptions) *ListWatchEvent {
-	return &ListWatchEvent{
-		uid:     uuid.NewUUID(),
-		gvr:     gvr,
-		options: options,
-		mode:    "list",
+		uid:       uuid.NewUUID(),
+		gvr:       gvr,
+		options:   options,
+		mode:      mode,
+		namespace: namespace,
 	}
 }
 
 func (l *ListWatchEvent) ToCloudEvent() cloudevents.Event {
 	evt := cloudevents.NewEvent()
+
+	data := &apis.RequestEvent{
+		Namespace: l.namespace,
+		Options:   l.options,
+	}
+
+	evt.SetType(l.mode)
 	evt.SetID(string(l.uid))
-	evt.SetType(fmt.Sprintf("%s.%s", l.mode, toGVRString(l.gvr)))
 	evt.SetSource(l.source)
-	evt.SetData(cloudevents.ApplicationJSON, l.options)
+	evt.SetData(cloudevents.ApplicationJSON, data)
 	return evt
 }
 
-func NewEventListWatcher(ctx context.Context, source string, client cloudevents.Client, gvr schema.GroupVersionResource) *EventListWatcher {
+func NewEventListWatcher(ctx context.Context, source, namespace string, client cloudevents.Client, gvr schema.GroupVersionResource) *EventListWatcher {
 	lw := &EventListWatcher{
 		source:         source,
 		eventClient:    client,
 		gvr:            gvr,
 		ctx:            ctx,
-		listResultChan: map[types.UID]chan ListResponseEvent{},
+		namespace:      namespace,
+		listResultChan: map[types.UID]chan apis.ListResponseEvent{},
 	}
 
 	// start list receiver
@@ -89,11 +87,11 @@ func NewEventListWatcher(ctx context.Context, source string, client cloudevents.
 			return fmt.Errorf("unable to find the related uid for list %s", evt.ID())
 		}
 
-		if evt.Type() != fmt.Sprintf("response.list.%s", toGVRString(lw.gvr)) {
+		if evt.Type() != apis.EventListResponseType(lw.gvr) {
 			return nil
 		}
 
-		response := &ListResponseEvent{}
+		response := &apis.ListResponseEvent{}
 		err := json.Unmarshal(evt.Data(), response)
 		if err != nil {
 			return err
@@ -119,21 +117,30 @@ func (e *EventListWatcher) Watch(options metav1.ListOptions) (watch.Interface, e
 }
 
 func (e *EventListWatcher) watch(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
-	watchEvent := newWatchEvent(e.source, e.gvr, options)
+	watchEvent := newListWatchEvent(e.source, apis.EventWatchType(e.gvr), e.namespace, e.gvr, options)
 
 	result := e.eventClient.Send(ctx, watchEvent.ToCloudEvent())
 	if cloudevents.IsUndelivered(result) {
 		return nil, fmt.Errorf("failed to send list event, %v", result)
 	}
 
-	watcher := newEventWatcher(watchEvent.uid, e.gvr, 10)
+	watcher := newEventWatcher(watchEvent.uid, e.stopWatch, e.gvr, 10)
 
 	go e.eventClient.StartReceiver(ctx, watcher.process)
 	return watcher, nil
 }
 
+func (e *EventListWatcher) stopWatch() {
+	stopWatch := newListWatchEvent(e.source, apis.EventStopWatchType(e.gvr), e.namespace, e.gvr, metav1.ListOptions{})
+	result := e.eventClient.Send(e.ctx, stopWatch.ToCloudEvent())
+
+	if cloudevents.IsUndelivered(result) {
+		utilruntime.HandleError(fmt.Errorf(result.Error()))
+	}
+}
+
 func (e *EventListWatcher) list(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
-	listEvent := newListEvent(e.source, e.gvr, options)
+	listEvent := newListWatchEvent(e.source, apis.EventListType(e.gvr), e.namespace, e.gvr, options)
 
 	result := e.eventClient.Send(ctx, listEvent.ToCloudEvent())
 	if cloudevents.IsUndelivered(result) {
@@ -143,7 +150,7 @@ func (e *EventListWatcher) list(ctx context.Context, options metav1.ListOptions)
 	objectList := &unstructured.UnstructuredList{}
 
 	// now start to recieve the list response until endofList is false
-	e.listResultChan[listEvent.uid] = make(chan ListResponseEvent)
+	e.listResultChan[listEvent.uid] = make(chan apis.ListResponseEvent)
 	defer delete(e.listResultChan, listEvent.uid)
 	for {
 		select {
@@ -164,8 +171,4 @@ func (e *EventListWatcher) list(ctx context.Context, options metav1.ListOptions)
 			return objectList, nil
 		}
 	}
-}
-
-func toGVRString(gvr schema.GroupVersionResource) string {
-	return fmt.Sprintf("%s.%s.%s", gvr.Version, gvr.Resource, gvr.Group)
 }

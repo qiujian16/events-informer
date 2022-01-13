@@ -2,33 +2,29 @@ package informers
 
 import (
 	"encoding/json"
-	"fmt"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"github.com/qiujian16/events-informer/pkg/apis"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-type WatchResponseEvent struct {
-	Type   watch.EventType            `json:"type"`
-	Object *unstructured.Unstructured `json:"object"`
-}
-
 type eventWatcher struct {
 	uid    types.UID
 	gvr    schema.GroupVersionResource
+	stop   func()
 	result chan watch.Event
 	done   chan struct{}
 }
 
-func newEventWatcher(uid types.UID, gvr schema.GroupVersionResource, chanSize int) *eventWatcher {
+func newEventWatcher(uid types.UID, stop func(), gvr schema.GroupVersionResource, chanSize int) *eventWatcher {
 	return &eventWatcher{
 		uid:    uid,
 		gvr:    gvr,
 		result: make(chan watch.Event, chanSize),
 		done:   make(chan struct{}),
+		stop:   stop,
 	}
 }
 
@@ -37,17 +33,17 @@ func (w *eventWatcher) ResultChan() <-chan watch.Event {
 }
 
 func (w *eventWatcher) Stop() {
-	return
+	w.stop()
 }
 
-func (w *eventWatcher) convertToWatchEvent(event *WatchResponseEvent) *watch.Event {
+func (w *eventWatcher) convertToWatchEvent(event *apis.WatchResponseEvent) *watch.Event {
 	return &watch.Event{
 		Type:   event.Type,
 		Object: event.Object,
 	}
 }
 
-func (w *eventWatcher) sendWatchCacheEvent(event *WatchResponseEvent) {
+func (w *eventWatcher) sendWatchCacheEvent(event *apis.WatchResponseEvent) {
 	watchEvent := w.convertToWatchEvent(event)
 	if watchEvent == nil {
 		// Watcher is not interested in that object.
@@ -83,11 +79,11 @@ func (w *eventWatcher) process(event cloudevents.Event) error {
 		return nil
 	}
 
-	if event.Type() != fmt.Sprintf("response.watch.%s", toGVRString(w.gvr)) {
+	if event.Type() != apis.EventWatchResponseType(w.gvr) {
 		return nil
 	}
 
-	response := &WatchResponseEvent{}
+	response := &apis.WatchResponseEvent{}
 	err := json.Unmarshal(event.Data(), response)
 	if err != nil {
 		return err
