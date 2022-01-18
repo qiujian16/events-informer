@@ -49,5 +49,8 @@ func main() {
 
 	transport := senders.NewDefaultSenderTansport(s, c)
 
-	transport.Run(context.Background())
+	ctx := context.TODO()
+	transport.Run(ctx)
+
+	<-ctx.Done()
 }

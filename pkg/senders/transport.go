@@ -41,6 +41,8 @@ func (d *defaultSenderTansport) Run(ctx context.Context) {
 			return err
 		}
 
+		klog.Infof("received request of %v", req)
+
 		switch mode {
 		case "list":
 			return d.sendListResponses(ctx, types.UID(evt.ID()), req.Namespace, gvr, req.Options)

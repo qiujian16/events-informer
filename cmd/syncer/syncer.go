@@ -29,6 +29,7 @@ func main() {
 	if err != nil {
 		klog.Fatalf("failed to create protocol: %s", err.Error())
 	}
+	defer sender.Close(ctx)
 
 	defer sender.Close(context.Background())
 

@@ -16,6 +16,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/klog/v2"
 )
 
 type EventListWatcher struct {
@@ -125,6 +126,8 @@ func (e *EventListWatcher) watch(ctx context.Context, options metav1.ListOptions
 		return nil, fmt.Errorf("failed to send list event, %v", result)
 	}
 
+	klog.Infof("sent watch event with result %v", result)
+
 	watcher := newEventWatcher(watchEvent.uid, e.stopWatch, e.gvr, 10)
 
 	go e.eventClient.StartReceiver(ctx, watcher.process)
@@ -147,6 +150,8 @@ func (e *EventListWatcher) list(ctx context.Context, options metav1.ListOptions)
 	if cloudevents.IsUndelivered(result) {
 		return nil, fmt.Errorf("failed to send list event, %v", result)
 	}
+
+	klog.Infof("sent list event with result %v", result)
 
 	objectList := &unstructured.UnstructuredList{}
 
