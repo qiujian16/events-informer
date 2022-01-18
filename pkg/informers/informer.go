@@ -24,7 +24,8 @@ type eventInformer struct {
 
 type eventSharedInformerFactory struct {
 	ctx           context.Context
-	client        cloudevents.Client
+	sender        cloudevents.Client
+	receiver      cloudevents.Client
 	defaultResync time.Duration
 	namespace     string
 
@@ -36,16 +37,17 @@ type eventSharedInformerFactory struct {
 	tweakListOptions dynamicinformer.TweakListOptionsFunc
 }
 
-func NewEventsSharedInformerFactory(ctx context.Context, client cloudevents.Client, defaultResync time.Duration) EventSharedInformerFactory {
-	return NewFilteredEventSharedInformerFactory(ctx, client, defaultResync, metav1.NamespaceAll, nil)
+func NewEventsSharedInformerFactory(ctx context.Context, sender, receiver cloudevents.Client, defaultResync time.Duration) EventSharedInformerFactory {
+	return NewFilteredEventSharedInformerFactory(ctx, sender, receiver, defaultResync, metav1.NamespaceAll, nil)
 }
 
 // NewFilteredDynamicSharedInformerFactory constructs a new instance of dynamicSharedInformerFactory.
 // Listers obtained via this factory will be subject to the same filters as specified here.
-func NewFilteredEventSharedInformerFactory(ctx context.Context, client cloudevents.Client, defaultResync time.Duration, namespace string, tweakListOptions dynamicinformer.TweakListOptionsFunc) EventSharedInformerFactory {
+func NewFilteredEventSharedInformerFactory(ctx context.Context, sender, receiver cloudevents.Client, defaultResync time.Duration, namespace string, tweakListOptions dynamicinformer.TweakListOptionsFunc) EventSharedInformerFactory {
 	return &eventSharedInformerFactory{
 		ctx:              ctx,
-		client:           client,
+		sender:           sender,
+		receiver:         receiver,
 		defaultResync:    defaultResync,
 		namespace:        namespace,
 		informers:        map[schema.GroupVersionResource]informers.GenericInformer{},
@@ -66,7 +68,7 @@ func (f *eventSharedInformerFactory) ForResource(gvr schema.GroupVersionResource
 		return informer
 	}
 
-	informer = NewFilteredEventsInformer(f.ctx, f.client, gvr, f.namespace, f.defaultResync, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+	informer = NewFilteredEventsInformer(f.ctx, f.sender, f.receiver, gvr, f.namespace, f.defaultResync, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 	f.informers[key] = informer
 
 	return informer
@@ -109,13 +111,13 @@ func (f *eventSharedInformerFactory) WaitForCacheSync(stopCh <-chan struct{}) ma
 
 func NewFilteredEventsInformer(
 	ctx context.Context,
-	eventClient cloudevents.Client,
+	sender, receiver cloudevents.Client,
 	gvr schema.GroupVersionResource,
 	namespace string,
 	resyncPeriod time.Duration,
 	indexers cache.Indexers,
 	tweakListOptions dynamicinformer.TweakListOptionsFunc) informers.GenericInformer {
-	lw := NewEventListWatcher(ctx, "agent", namespace, eventClient, gvr)
+	lw := NewEventListWatcher(ctx, "agent", namespace, sender, receiver, gvr)
 
 	return &eventInformer{
 		gvr: gvr,

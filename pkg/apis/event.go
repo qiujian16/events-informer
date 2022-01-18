@@ -57,6 +57,6 @@ func ParseEventType(t string) (string, schema.GroupVersionResource, error) {
 
 	return eventTypeArray[0], schema.GroupVersionResource{
 		Version:  eventTypeArray[1],
-		Resource: eventTypeArray[1],
-		Group:    eventTypeArray[2]}, nil
+		Resource: eventTypeArray[2],
+		Group:    eventTypeArray[3]}, nil
 }

@@ -20,7 +20,8 @@ import (
 )
 
 type EventListWatcher struct {
-	eventClient    cloudevents.Client
+	sender         cloudevents.Client
+	receiver       cloudevents.Client
 	gvr            schema.GroupVersionResource
 	source         string
 	namespace      string
@@ -68,10 +69,11 @@ func (l *ListWatchEvent) ToCloudEvent() cloudevents.Event {
 	return evt
 }
 
-func NewEventListWatcher(ctx context.Context, source, namespace string, client cloudevents.Client, gvr schema.GroupVersionResource) *EventListWatcher {
+func NewEventListWatcher(ctx context.Context, source, namespace string, sender, receiver cloudevents.Client, gvr schema.GroupVersionResource) *EventListWatcher {
 	lw := &EventListWatcher{
 		source:         source,
-		eventClient:    client,
+		sender:         sender,
+		receiver:       receiver,
 		gvr:            gvr,
 		ctx:            ctx,
 		namespace:      namespace,
@@ -79,7 +81,7 @@ func NewEventListWatcher(ctx context.Context, source, namespace string, client c
 	}
 
 	// start list receiver
-	go client.StartReceiver(ctx, func(evt cloudevents.Event) error {
+	go receiver.StartReceiver(ctx, func(evt cloudevents.Event) error {
 		lw.rwlock.RLock()
 		defer lw.rwlock.RUnlock()
 
@@ -121,7 +123,7 @@ func (e *EventListWatcher) Watch(options metav1.ListOptions) (watch.Interface, e
 func (e *EventListWatcher) watch(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
 	watchEvent := newListWatchEvent(e.source, apis.EventWatchType(e.gvr), e.namespace, e.gvr, options)
 
-	result := e.eventClient.Send(ctx, watchEvent.ToCloudEvent())
+	result := e.sender.Send(ctx, watchEvent.ToCloudEvent())
 	if cloudevents.IsUndelivered(result) {
 		return nil, fmt.Errorf("failed to send list event, %v", result)
 	}
@@ -130,13 +132,13 @@ func (e *EventListWatcher) watch(ctx context.Context, options metav1.ListOptions
 
 	watcher := newEventWatcher(watchEvent.uid, e.stopWatch, e.gvr, 10)
 
-	go e.eventClient.StartReceiver(ctx, watcher.process)
+	go e.receiver.StartReceiver(ctx, watcher.process)
 	return watcher, nil
 }
 
 func (e *EventListWatcher) stopWatch() {
 	stopWatch := newListWatchEvent(e.source, apis.EventStopWatchType(e.gvr), e.namespace, e.gvr, metav1.ListOptions{})
-	result := e.eventClient.Send(e.ctx, stopWatch.ToCloudEvent())
+	result := e.sender.Send(e.ctx, stopWatch.ToCloudEvent())
 
 	if cloudevents.IsUndelivered(result) {
 		utilruntime.HandleError(fmt.Errorf(result.Error()))
@@ -146,7 +148,7 @@ func (e *EventListWatcher) stopWatch() {
 func (e *EventListWatcher) list(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
 	listEvent := newListWatchEvent(e.source, apis.EventListType(e.gvr), e.namespace, e.gvr, options)
 
-	result := e.eventClient.Send(ctx, listEvent.ToCloudEvent())
+	result := e.sender.Send(ctx, listEvent.ToCloudEvent())
 	if cloudevents.IsUndelivered(result) {
 		return nil, fmt.Errorf("failed to send list event, %v", result)
 	}

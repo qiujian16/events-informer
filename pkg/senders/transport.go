@@ -15,21 +15,23 @@ import (
 )
 
 type defaultSenderTansport struct {
-	sender      Sender
-	eventClient cloudevents.Client
-	watchStop   map[types.UID]context.CancelFunc
+	sender    Sender
+	sclient   cloudevents.Client
+	rclient   cloudevents.Client
+	watchStop map[types.UID]context.CancelFunc
 }
 
-func NewDefaultSenderTansport(sender Sender, evtClient cloudevents.Client) SenderTransport {
+func NewDefaultSenderTansport(sender Sender, sclient, rclient cloudevents.Client) SenderTransport {
 	return &defaultSenderTansport{
-		sender:      sender,
-		eventClient: evtClient,
-		watchStop:   map[types.UID]context.CancelFunc{},
+		sender:    sender,
+		sclient:   sclient,
+		rclient:   rclient,
+		watchStop: map[types.UID]context.CancelFunc{},
 	}
 }
 
 func (d *defaultSenderTansport) Run(ctx context.Context) {
-	d.eventClient.StartReceiver(ctx, func(evt cloudevents.Event) error {
+	d.rclient.StartReceiver(ctx, func(evt cloudevents.Event) error {
 		mode, gvr, err := apis.ParseEventType(evt.Type())
 		if err != nil {
 			return err
@@ -88,9 +90,9 @@ func (d *defaultSenderTansport) watchResponse(ctx context.Context, id types.UID,
 			evt.SetData(cloudevents.ApplicationJSON, response)
 
 			klog.Infof("send watch response for resource %v", gvr)
-			result := d.eventClient.Send(ctx, evt)
+			result := d.sclient.Send(ctx, evt)
 
-			if len(result.Error()) > 0 {
+			if result != nil {
 				klog.Errorf(result.Error())
 			}
 		case <-watchCtx.Done():
@@ -102,6 +104,7 @@ func (d *defaultSenderTansport) watchResponse(ctx context.Context, id types.UID,
 func (d *defaultSenderTansport) sendListResponses(ctx context.Context, id types.UID, namespace string, gvr schema.GroupVersionResource, options metav1.ListOptions) error {
 	objs, err := d.sender.List(namespace, gvr, options)
 	if err != nil {
+		klog.Errorf("failed to list resource with err: %v", err)
 		return err
 	}
 
@@ -117,9 +120,10 @@ func (d *defaultSenderTansport) sendListResponses(ctx context.Context, id types.
 	evt.SetData(cloudevents.ApplicationJSON, response)
 
 	klog.Infof("send list response for resource %v", gvr)
-	result := d.eventClient.Send(ctx, evt)
+	result := d.sclient.Send(ctx, evt)
 
-	if len(result.Error()) > 0 {
+	if result != nil {
+		klog.Errorf("failed to send request with error: %v", err)
 		return fmt.Errorf(result.Error())
 	}
 

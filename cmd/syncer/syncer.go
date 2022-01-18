@@ -25,20 +25,29 @@ func main() {
 	saramaConfig := sarama.NewConfig()
 	saramaConfig.Version = sarama.V2_0_0_0
 
-	sender, err := kafka_sarama.NewSender([]string{"127.0.0.1:9092"}, saramaConfig, "test-topic")
+	sender, err := kafka_sarama.NewSender([]string{kafkaEndpoint}, saramaConfig, "request-topic")
 	if err != nil {
 		klog.Fatalf("failed to create protocol: %s", err.Error())
 	}
 	defer sender.Close(ctx)
 
-	defer sender.Close(context.Background())
+	receiver, err := kafka_sarama.NewConsumer([]string{kafkaEndpoint}, saramaConfig, "response-group-id", "response-topic")
+	if err != nil {
+		klog.Fatalf("failed to create protocol: %s", err.Error())
+	}
+	defer receiver.Close(ctx)
 
-	c, err := cloudevents.NewClient(sender, cloudevents.WithTimeNow(), cloudevents.WithUUIDs())
+	s, err := cloudevents.NewClient(sender, cloudevents.WithTimeNow(), cloudevents.WithUUIDs())
 	if err != nil {
 		klog.Fatalf("failed to create client, %v", err)
 	}
 
-	informerFactory := informers.NewEventsSharedInformerFactory(ctx, c, 5*time.Minute)
+	r, err := cloudevents.NewClient(receiver)
+	if err != nil {
+		klog.Fatalf("failed to create client, %v", err)
+	}
+
+	informerFactory := informers.NewEventsSharedInformerFactory(ctx, s, r, 5*time.Minute)
 
 	informer := informerFactory.ForResource(schema.GroupVersionResource{Version: "v1", Resource: "secrets"})
 
