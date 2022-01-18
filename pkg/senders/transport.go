@@ -82,6 +82,7 @@ func (d *defaultSenderTansport) watchResponse(ctx context.Context, id types.UID,
 			evt := cloudevents.NewEvent()
 			evt.SetID(string(id))
 			evt.SetType(apis.EventWatchResponseType(gvr))
+			evt.SetSource("server")
 			evt.SetData(cloudevents.ApplicationJSON, response)
 
 			klog.Infof("send watch response for resource %v", gvr)
@@ -110,6 +111,7 @@ func (d *defaultSenderTansport) sendListResponses(ctx context.Context, id types.
 	evt := cloudevents.NewEvent()
 	evt.SetID(string(id))
 	evt.SetType(apis.EventListResponseType(gvr))
+	evt.SetSource("server")
 	evt.SetData(cloudevents.ApplicationJSON, response)
 
 	klog.Infof("send list response for resource %v", gvr)

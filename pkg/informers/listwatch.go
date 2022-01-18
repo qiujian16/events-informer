@@ -48,6 +48,7 @@ func newListWatchEvent(source, mode, namespace string, gvr schema.GroupVersionRe
 		options:   options,
 		mode:      mode,
 		namespace: namespace,
+		source:    source,
 	}
 }
 
