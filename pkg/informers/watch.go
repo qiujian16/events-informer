@@ -1,16 +1,13 @@
 package informers
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/qiujian16/events-informer/pkg/apis"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/klog/v2"
 )
 
 type eventWatcher struct {
@@ -18,7 +15,6 @@ type eventWatcher struct {
 	gvr    schema.GroupVersionResource
 	stop   func()
 	result chan watch.Event
-	done   bool
 }
 
 func newEventWatcher(uid types.UID, stop func(), gvr schema.GroupVersionResource, chanSize int) *eventWatcher {
@@ -27,7 +23,6 @@ func newEventWatcher(uid types.UID, stop func(), gvr schema.GroupVersionResource
 		gvr:    gvr,
 		result: make(chan watch.Event, chanSize),
 		stop:   stop,
-		done:   false,
 	}
 }
 
@@ -36,7 +31,6 @@ func (w *eventWatcher) ResultChan() <-chan watch.Event {
 }
 
 func (w *eventWatcher) Stop() {
-	w.done = true
 	w.stop()
 }
 
@@ -57,34 +51,21 @@ func (w *eventWatcher) sendWatchCacheEvent(event *apis.WatchResponseEvent) {
 	w.result <- *watchEvent
 }
 
-func (w *eventWatcher) process(ctx context.Context, receiver cloudevents.Client) {
-	for {
-		err := receiver.StartReceiver(ctx, func(event cloudevents.Event) error {
-			klog.Info("receive wath response %v", event)
-			if w.uid != types.UID(event.ID()) {
-				return fmt.Errorf("unmatched event id")
-			}
-
-			if event.Type() != apis.EventWatchResponseType(w.gvr) {
-				return fmt.Errorf("unmatched gvr got %s", event.Type())
-			}
-
-			response := &apis.WatchResponseEvent{}
-			err := json.Unmarshal(event.Data(), response)
-			if err != nil {
-				return err
-			}
-
-			w.sendWatchCacheEvent(response)
-			return nil
-		})
-
-		if err != nil {
-			klog.Errorf("failed to receive watch event: %v", err)
-		}
-
-		if w.done {
-			break
-		}
+func (w *eventWatcher) process(event cloudevents.Event) error {
+	if w.uid != types.UID(event.ID()) {
+		return nil
 	}
+
+	if event.Type() != apis.EventWatchResponseType(w.gvr) {
+		return nil
+	}
+
+	response := &apis.WatchResponseEvent{}
+	err := json.Unmarshal(event.Data(), response)
+	if err != nil {
+		return err
+	}
+
+	w.sendWatchCacheEvent(response)
+	return nil
 }

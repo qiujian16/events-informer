@@ -26,6 +26,7 @@ type EventListWatcher struct {
 	source         string
 	namespace      string
 	ctx            context.Context
+	watcher        *eventWatcher
 	listResultChan map[types.UID]chan apis.ListResponseEvent
 	rwlock         sync.RWMutex
 }
@@ -80,30 +81,32 @@ func NewEventListWatcher(ctx context.Context, source, namespace string, sender, 
 		listResultChan: map[types.UID]chan apis.ListResponseEvent{},
 	}
 
-	// start list receiver
+	// start list/watch receiver
 	go receiver.StartReceiver(ctx, func(evt cloudevents.Event) error {
 		lw.rwlock.RLock()
 		defer lw.rwlock.RUnlock()
 
-		resulctChan, ok := lw.listResultChan[types.UID(evt.ID())]
+		switch evt.Type() {
+		case apis.EventListResponseType(lw.gvr):
+			resulctChan, ok := lw.listResultChan[types.UID(evt.ID())]
 
-		if !ok {
-			return fmt.Errorf("unable to find the related uid for list %s", evt.ID())
-		}
+			if !ok {
+				return fmt.Errorf("unable to find the related uid for list %s", evt.ID())
+			}
 
-		if evt.Type() != apis.EventListResponseType(lw.gvr) {
-			return nil
-		}
+			response := &apis.ListResponseEvent{}
 
-		response := &apis.ListResponseEvent{}
-		err := json.Unmarshal(evt.Data(), response)
-		if err != nil {
-			return err
-		}
+			err := json.Unmarshal(evt.Data(), response)
+			if err != nil {
+				return err
+			}
 
-		select {
-		case resulctChan <- *response:
-		case <-ctx.Done():
+			resulctChan <- *response
+		case apis.EventWatchResponseType(lw.gvr):
+			if lw.watcher == nil {
+				return nil
+			}
+			return lw.watcher.process(evt)
 		}
 
 		return nil
@@ -130,10 +133,9 @@ func (e *EventListWatcher) watch(ctx context.Context, options metav1.ListOptions
 
 	klog.Infof("sent watch event with result %v", result)
 
-	watcher := newEventWatcher(watchEvent.uid, e.stopWatch, e.gvr, 10)
+	e.watcher = newEventWatcher(watchEvent.uid, e.stopWatch, e.gvr, 10)
 
-	go watcher.process(ctx, e.receiver)
-	return watcher, nil
+	return e.watcher, nil
 }
 
 func (e *EventListWatcher) stopWatch() {
