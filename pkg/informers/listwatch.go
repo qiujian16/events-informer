@@ -86,6 +86,7 @@ func NewEventListWatcher(ctx context.Context, source, namespace string, sender, 
 		lw.rwlock.RLock()
 		defer lw.rwlock.RUnlock()
 
+		klog.Infof("received response event %s, %v", evt.Type(), evt)
 		switch evt.Type() {
 		case apis.EventListResponseType(lw.gvr):
 			resulctChan, ok := lw.listResultChan[types.UID(evt.ID())]
