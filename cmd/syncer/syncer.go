@@ -9,6 +9,7 @@ import (
 	"github.com/cloudevents/sdk-go/protocol/kafka_sarama/v2"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/qiujian16/events-informer/pkg/informers"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
@@ -53,10 +54,13 @@ func main() {
 
 	informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			klog.Infof("added %v", obj)
+			accessor, _ := meta.Accessor(obj)
+			klog.Infof("added %s/%s", accessor.GetName(), accessor.GetNamespace())
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
-			klog.Infof("Updated from %v to %v", oldObj, newObj)
+			oldAccessor, _ := meta.Accessor(oldObj)
+			newAccessor, _ := meta.Accessor(newObj)
+			klog.Infof("Updated from %s/%s to %s/%s", oldAccessor.GetNamespace(), oldAccessor.GetName(), newAccessor.GetNamespace(), newAccessor.GetName())
 		},
 		DeleteFunc: func(obj interface{}) {
 			klog.Infof("deleted %v", obj)

@@ -15,7 +15,6 @@ type eventWatcher struct {
 	gvr    schema.GroupVersionResource
 	stop   func()
 	result chan watch.Event
-	done   chan struct{}
 }
 
 func newEventWatcher(uid types.UID, stop func(), gvr schema.GroupVersionResource, chanSize int) *eventWatcher {
@@ -23,7 +22,6 @@ func newEventWatcher(uid types.UID, stop func(), gvr schema.GroupVersionResource
 		uid:    uid,
 		gvr:    gvr,
 		result: make(chan watch.Event, chanSize),
-		done:   make(chan struct{}),
 		stop:   stop,
 	}
 }
@@ -50,28 +48,7 @@ func (w *eventWatcher) sendWatchCacheEvent(event *apis.WatchResponseEvent) {
 		return
 	}
 
-	// We need to ensure that if we put event X to the c.result, all
-	// previous events were already put into it before, no matter whether
-	// c.done is close or not.
-	// Thus we cannot simply select from c.done and c.result and this
-	// would give us non-determinism.
-	// At the same time, we don't want to block infinitely on putting
-	// to c.result, when c.done is already closed.
-
-	// This ensures that with c.done already close, we at most once go
-	// into the next select after this. With that, no matter which
-	// statement we choose there, we will deliver only consecutive
-	// events.
-	select {
-	case <-w.done:
-		return
-	default:
-	}
-
-	select {
-	case w.result <- *watchEvent:
-	case <-w.done:
-	}
+	w.result <- *watchEvent
 }
 
 func (w *eventWatcher) process(event cloudevents.Event) error {
