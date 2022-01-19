@@ -132,7 +132,7 @@ func (e *EventListWatcher) watch(ctx context.Context, options metav1.ListOptions
 
 	watcher := newEventWatcher(watchEvent.uid, e.stopWatch, e.gvr, 10)
 
-	go e.receiver.StartReceiver(ctx, watcher.process)
+	go watcher.process(ctx, e.receiver)
 	return watcher, nil
 }
 
